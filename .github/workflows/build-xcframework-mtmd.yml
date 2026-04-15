@@ -1,0 +1,97 @@
+name: Build XCFramework with libmtmd
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag for the release (e.g. b8795-mtmd.1). Leave blank to only upload as artifact.'
+        required: false
+        default: ''
+  push:
+    branches:
+      - feature/libmtmd-xcframework
+    paths:
+      - build-xcframework.sh
+      - .github/workflows/build-xcframework-mtmd.yml
+      - tools/mtmd/**
+      - CMakeLists.txt
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          sw_vers
+          xcodebuild -version
+          cmake --version
+
+      - name: Build XCFramework
+        run: |
+          chmod +x ./build-xcframework.sh
+          ./build-xcframework.sh
+
+      - name: Verify mtmd symbols in ios-arm64 binary
+        run: |
+          set -e
+          BIN=build-apple/llama.xcframework/ios-arm64/llama.framework/llama
+          test -f "$BIN" || { echo "xcframework binary missing: $BIN"; exit 1; }
+          echo "Symbol count (mtmd_):"
+          nm "$BIN" | grep -c " _mtmd_" || { echo "no mtmd symbols found"; exit 1; }
+          echo "Sample mtmd symbols:"
+          nm "$BIN" | grep " _mtmd_" | head -20
+
+      - name: Package xcframework
+        id: pkg
+        run: |
+          set -e
+          cd build-apple
+          SHORT_SHA=$(git -C "$GITHUB_WORKSPACE" rev-parse --short HEAD)
+          ZIP_NAME="llama-mtmd-xcframework-${SHORT_SHA}.zip"
+          zip -r --symlinks "../${ZIP_NAME}" llama.xcframework
+          cd ..
+          CHECKSUM=$(swift package compute-checksum "${ZIP_NAME}" 2>/dev/null || shasum -a 256 "${ZIP_NAME}" | awk '{print $1}')
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${CHECKSUM}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Checksum: ${CHECKSUM}"
+          ls -lh "${ZIP_NAME}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.zip_name }}
+          path: ${{ steps.pkg.outputs.zip_name }}
+
+      - name: Write checksum file
+        run: |
+          cat > checksum.txt <<EOF
+          zip: ${{ steps.pkg.outputs.zip_name }}
+          sha256: ${{ steps.pkg.outputs.checksum }}
+          EOF
+          cat checksum.txt
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksum-${{ steps.pkg.outputs.short_sha }}
+          path: checksum.txt
+
+      - name: Create release (if release_tag provided)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="${{ inputs.release_tag }}"
+          gh release create "$TAG" \
+            --title "XCFramework with libmtmd ($TAG)" \
+            --notes "iOS/macOS/tvOS/visionOS XCFramework built from llama.cpp with libmtmd statically linked.\n\nsha256: ${{ steps.pkg.outputs.checksum }}\n\nUsage:\n.binaryTarget(name: \"llama-cpp\", url: \"<release-asset-url>\", checksum: \"${{ steps.pkg.outputs.checksum }}\")" \
+            "${{ steps.pkg.outputs.zip_name }}" \
+            "checksum.txt" || gh release upload "$TAG" "${{ steps.pkg.outputs.zip_name }}" "checksum.txt" --clobber
