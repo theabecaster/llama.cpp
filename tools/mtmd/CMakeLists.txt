@@ -95,10 +95,11 @@ if (TARGET mtmd)
     endif()
 endif()
 
-# Executables depend on the `common` target, which is only built when
-# LLAMA_BUILD_COMMON is enabled. Guard the CLI binaries so that standalone
-# library-only builds (LLAMA_BUILD_MTMD=ON without LLAMA_BUILD_COMMON) still work.
-if (LLAMA_BUILD_COMMON)
+# Gate CLI binaries on LLAMA_BUILD_TOOLS so that standalone library-only
+# builds (LLAMA_BUILD_MTMD=ON with LLAMA_BUILD_TOOLS=OFF — e.g. Apple
+# XCFramework packaging) skip the executables entirely. LLAMA_BUILD_COMMON
+# defaults to ON in standalone builds, so we cannot rely on it for gating.
+if (LLAMA_BUILD_TOOLS)
     add_executable(llama-llava-cli    deprecation-warning.cpp)
     add_executable(llama-gemma3-cli   deprecation-warning.cpp)
     add_executable(llama-minicpmv-cli deprecation-warning.cpp)
