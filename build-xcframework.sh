@@ -124,8 +124,13 @@ setup_framework_structure() {
     cp ggml/include/ggml-cpu.h     ${header_path}
     cp ggml/include/ggml-blas.h    ${header_path}
     cp ggml/include/gguf.h         ${header_path}
-    cp tools/mtmd/mtmd.h           ${header_path}
-    cp tools/mtmd/mtmd-helper.h    ${header_path}
+
+    # Note on mtmd: libmtmd.a is combined into the framework binary (see
+    # combine_static_libraries) so the symbols are exported, but mtmd.h and
+    # mtmd-helper.h are NOT copied into the module because they contain C++
+    # constructs (method-bearing structs, deleters) that break Clang's pure-C
+    # module-map precompilation path. Consumers that need the mtmd ABI should
+    # declare the symbols themselves via an extern C shim header.
 
     # Create module map (common for all platforms)
     cat > ${module_path}module.modulemap << EOF
@@ -137,8 +142,6 @@ framework module llama {
     header "ggml-metal.h"
     header "ggml-cpu.h"
     header "ggml-blas.h"
-    header "mtmd.h"
-    header "mtmd-helper.h"
     header "gguf.h"
 
     link "c++"
